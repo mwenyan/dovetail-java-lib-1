@@ -25,11 +25,11 @@ import com.tibco.dovetail.core.runtime.flow.Node;
 import com.tibco.dovetail.core.runtime.flow.ReplyData;
 import com.tibco.dovetail.core.runtime.flow.ReplyHandler;
 import com.tibco.dovetail.core.runtime.flow.TransactionFlow;
-import com.tibco.dovetail.core.runtime.flow.Mapping.ValueMappingType;
 import com.tibco.dovetail.core.runtime.services.IContainerService;
 import com.tibco.dovetail.core.runtime.services.ILogService;
 import com.tibco.dovetail.core.runtime.util.JsonUtil;
 
+import co.paralleluniverse.fibers.Suspendable;
 import net.minidev.json.JSONArray;
 
 public class FlowEngine {
@@ -46,6 +46,7 @@ public class FlowEngine {
         replyHandler = new ReplyHandler();
     }
     
+    @Suspendable
 	public ReplyData execute(Context context) {
         try {
             this.container = context.getContainerService();
@@ -55,6 +56,9 @@ public class FlowEngine {
             flowInputs.forEach((k, v) -> scope.addVariable("$flow", k, v));
 
             Node root = flow.getRoot();
+            if(root == null)
+            		return new ReplyData("Success", null, null);
+            
             runNode(root);
         }catch (Exception e){
             if(flow.getErrorHandler() != null){
@@ -68,27 +72,28 @@ public class FlowEngine {
         return this.replyHandler.getReplyData();
     }
 
+    @Suspendable
     private void runNode(Node n){
         //invoke model
         invokeTask(n.getTaskId());
 
-        n.getToLinks().forEach(l -> {
+        for(Link l : n.getToLinks()){
             if(eval(l)){
                 runNode(l.getNextNode());
             }
-        });
+        };
     }
 
+    @Suspendable
     private void invokeTask(String id){
     		logger.debug("Invoke activity " + id);
-        ActivityTask activity = flow.getTask(id);
-        if(activity == null)
-            return;
+        if(!checkActivityExist(id))
+        		return;
         
         Context context = null;
-        if(activity.isIteratorTask()) {
+        if(isIterateTask(id)) {
         		//get iterate object
-        		Object iterate = readValue(activity.getIterateField(), scope);
+        		Object iterate = getIterateValue(id);
         		if(iterate != null) {
         			JSONArray vals = ((DocumentContext)iterate).json();
         			DocumentContext output = JsonUtil.getJsonParser().parse("[]");
@@ -97,8 +102,8 @@ public class FlowEngine {
         				scope.addVariable("$current", "key", i);
         				scope.addVariable("$current", "value", vals.get(i));
         				
-        				context = resolveInputs(activity);
-        				context = evalActivity(activity.getActivityRef(), context);
+        				context = resolveInputs(id);	
+        				context = evalActivity(getActivityRef(id), context);
         				
         				//TODO: should check accumulation flag from UI
         				if(context.getOutputs().size() > 0) {
@@ -132,23 +137,49 @@ public class FlowEngine {
         		}
         		
         }else {
-        		context = resolveInputs(activity);
-        		context = evalActivity(activity.getActivityRef(), context);
+        		context = resolveInputs(id);
+        		context = evalActivity(getActivityRef(id), context);
         		context.getOutputs().forEach((k, v) -> scope.addVariable("$activity", id + "." + k, v));
         }
 
     }
+    
+    private boolean checkActivityExist(String id) {
+    		ActivityTask activity = flow.getTask(id);
+        if(activity == null)
+             return false;
+        else
+        		return true;
+    }
 
-    private ContextImpl resolveInputs(ActivityTask activity){
+    private String getActivityRef(String id) {
+    		return flow.getTask(id).getActivityRef();
+    }
+    
+    private boolean isIterateTask(String id) {
+    		return flow.getTask(id).isIteratorTask();
+    }
+    
+    private Object getIterateValue(String id) {
+    		ActivityTask activity = flow.getTask(id);
+    		return readValue(activity.getIterateField(), scope);
+    }
+    private ContextImpl resolveInputs(String id){
+    		ActivityTask activity = flow.getTask(id);
 
         ContextImpl context = new ContextImpl();
         context.setContainerService(this.container);
         context.setReplyHandler(replyHandler);
+        context.addInput("__properties__", flow.getProperties());
 
         activity.getInputs().forEach((k, v) -> {
             if(v.getMappingType() == null){
                 context.addInput(k, v.getMappingValue());
                 return;
+            }
+            
+            if(v.getComplextObjectMetadata() != null ) {
+            		context.addInput(k+"_metadata", v.getComplextObjectMetadata());
             }
 
             switch (v.getMappingType()){
@@ -256,7 +287,12 @@ public class FlowEngine {
 	    					top = (LinkedHashMap<String, Object>) chld;
 	    				}
 	    				
-	    				if(fieldmap.get("type").toString().equals("primitive")) {
+	    				if(fieldmap.get("type").toString().equalsIgnoreCase("foreach") || fieldmap.get("type").toString().equalsIgnoreCase("NEWARRAY")) {
+	    					//foreach and NEWARRAY
+	    					List<LinkedHashMap<String, Object>> value = createArrayObject(lclscope, fieldmap);
+	    					top.put(tokens[tokens.length-1], value);
+	    					
+	    				} else {
 	    					Object mapObj = fieldmap.get("from");
 	    					if(mapObj instanceof ParseTree) {
 	    						top.put(tokens[tokens.length-1], readValue((ParseTree)fieldmap.get("from"), lclscope));
@@ -264,10 +300,6 @@ public class FlowEngine {
 	    						//literal mapping
 	    						top.put(tokens[tokens.length-1], mapObj);
 	    					}
-	    				} else {
-	    					//foreach and NEWARRAY
-	    					List<LinkedHashMap<String, Object>> value = createArrayObject(lclscope, fieldmap);
-	    					top.put(tokens[tokens.length-1], value);
 	    				} 
 	    			}	
 	    		}
@@ -281,7 +313,7 @@ public class FlowEngine {
 
         for(String k: mapping.keySet()){
             Object objmap = mapping.get(k).getMappingValue();
-            ValueMappingType mapType = mapping.get(k).getMappingType();
+            com.tibco.dovetail.core.runtime.flow.ValueMappingType mapType = mapping.get(k).getMappingType();
             
             switch(mapType) { 
             case literal:
@@ -304,21 +336,6 @@ public class FlowEngine {
             default:
             		throw new RuntimeException("mapping type " + mapType + " is not supported");
             }
-            /*
-            if(objmap instanceof ParseTree) {
-	            Object value = readValue((ParseTree)mapping.get(k), lclscope);
-	            //check/create nested objects
-	            if (value instanceof DocumentContext)
-	            		doc = setAttrValue(doc, parentPath, k, ((DocumentContext)value).json());    
-	            else 
-	            		doc = setAttrValue(doc, parentPath, k, value);
-            } else if (objmap instanceof Map) {
-            		List<LinkedHashMap<String, Object>> value = createArrayObject(scope, (Map<String, Object>)objmap);
-            		doc = setAttrValue(doc, parentPath, k, value);
-            } else {
-            	//literal mapping
-            		doc = setAttrValue(doc, parentPath, k, objmap);
-            }*/
         }
 
         return doc;
@@ -352,7 +369,7 @@ public class FlowEngine {
         MapExprResolver visitor = new MapExprResolver(lclscope);
         return visitor.visit(mapping);
     }
-
+    @Suspendable
     private Context evalActivity(String activityRef, Context context) {
         IActivity activity = ActivityRegistry.getActivityInstance(activityRef);
         activity.eval(context);

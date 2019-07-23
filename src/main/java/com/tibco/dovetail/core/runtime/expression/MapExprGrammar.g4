@@ -5,7 +5,7 @@ condition			: '(' condition ')'													#parenthesisCond
 					| atomexpr ((EQUAL | NOTEQUAL | GT | LT | GE | LE) atomexpr)?			#condExp														
 					;
 					
-atomexpr          	: funcName '(' atomexpr (',' atomexpr)* ')'                   		#functionExp
+atomexpr          	: funcName '(' (')' | atomexpr (',' atomexpr)* ')')                   #functionExp
                     | NUMBER                                    							#numericAtomExp
                     | STRING																#stringAtomExp
                     | variable		                                       				#varAtomExp
@@ -24,15 +24,16 @@ variable				: activity
 				    | iteratorKey
 				    | iteratorValue
 				    | current
-				    | containerService
+//				    | containerService
 					;
 					
 activity				: ('{{')? '$activity[' NAME '].' NAME ('.' NAME)* ('}}')?;
-flow					: ('{{')? '$flow.transactionInput.' NAME ('.' NAME)* ('}}')?;
+//flow					: ('{{')? '$flow.transactionInput.' NAME ('.' NAME)* ('}}')?;
+flow					: ('{{')? '$flow.' NAME ('.' NAME)* ('}}')?;
 iteratorKey			: '$current.iteration.key';
 iteratorValue	    : '$current.iteration.value.' NAME ('.' NAME)*;
 current				: '$.' NAME ('.' NAME)*;
-containerService		: '$flow.containerServiceStub';
+//containerService		: '$flow.containerServiceStub';
  
 fragment LETTER     : [a-zA-Z_] ;
 fragment DIGIT      : [0-9] ;

@@ -54,10 +54,10 @@ public class Link {
             InputStream stream = new ByteArrayInputStream(mapping.getBytes(StandardCharsets.UTF_8));
 
             MapExprGrammarLexer lexer = new MapExprGrammarLexer(CharStreams.fromStream(stream, StandardCharsets.UTF_8));
-
             CommonTokenStream tokens = new CommonTokenStream(lexer);
 
             MapExprGrammarParser parser = new MapExprGrammarParser(tokens);
+           
             stream.close();
             return parser.condition();
         }catch (Exception e){

@@ -9,12 +9,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tibco.dovetail.core.model.activity.ActivityModel;
 import com.tibco.dovetail.core.model.common.SimpleAttribute;
+import com.tibco.dovetail.core.model.composer.MetadataParser;
 import com.tibco.dovetail.core.model.flow.*;
 import com.tibco.dovetail.core.runtime.engine.Scope;
 import com.tibco.dovetail.core.runtime.expression.MapExprGrammarLexer;
 import com.tibco.dovetail.core.runtime.expression.MapExprGrammarParser;
 import com.tibco.dovetail.core.runtime.flow.*;
-import com.tibco.dovetail.core.runtime.flow.Mapping.ValueMappingType;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -59,10 +59,10 @@ public class FlowCompiler {
 
         //links
         Node root = compileLinks(data.getLinks());
-        if (data.getTasks().length == 0) {
+    /*    if (data.getTasks().length == 0) {
         		throw new RuntimeException("There is no activity in the flow");
         }
-        
+        */
         if(root == null && data.getTasks().length > 0) {
         		root = new Node(data.getTasks()[0].getId());
         }
@@ -85,9 +85,25 @@ public class FlowCompiler {
         Map<String, Object> input = task.getActivity().getInput();
         if(input != null) {
             for (String attr : input.keySet()){
+<<<<<<< HEAD
                 SimpleAttribute a = getActivityInputAttribute(activityModel, attr);    		
                 InputMapping inputMapping = new InputMapping();      
                 inputMapping.setMappingType(Mapping.ValueMappingType.literal);
+=======
+                SimpleAttribute a = getActivityInputAttribute(activityModel, attr);
+                AttributeMapping inputMapping = new AttributeMapping(a.getName());
+                
+                if(a.getType().equals("complex_object")) {
+                		Map map = (Map)input.get(attr);
+                		Object meta = map.get("metadata");
+                		if(meta != null && !meta.toString().trim().isEmpty()) {
+                			a.setSchema(meta.toString());
+                			inputMapping.setComplextObjectMetadata(MetadataParser.parseSingleSchema(meta.toString()));
+                		}
+                }
+                
+                inputMapping.setMappingType(ValueMappingType.literal);
+>>>>>>> master
                 
                 inputMapping.setMappingValue(task.getActivity().getInput().get(attr));
                 activityTask.addInput(a.getName(), inputMapping);
@@ -100,24 +116,24 @@ public class FlowCompiler {
             for (TaskMapping mapping : mappings.getInput()){
             		ArrayList<String> names = getInputAttrName(MAP_TO_ATTR_PATTERN, mapping.getMapTo());
                  Object mappingValue = mapping.getValue();
-                 ValueMappingType mappingType = AttributeMapping.ValueMappingType.valueOf(mapping.getType());
+                 ValueMappingType mappingType = ValueMappingType.valueOf(mapping.getType());
                  SimpleAttribute a = getActivityInputAttribute(activityModel, names.get(0));
                  
             		//find top level attribute object mapping
-                Mapping root = activityTask.getInput(names.get(0));
+                AttributeMapping root = activityTask.getInput(names.get(0));
                 if (root == null) {
-                    root = new InputMapping();
+                    root = new AttributeMapping(names.get(0));
                     
                     activityTask.addInput(names.get(0), root);
                 }
 
                 //first time
-                if(root.getMappingType() != Mapping.ValueMappingType.object && names.size() > 1) {
-            			root.setMappingType(Mapping.ValueMappingType.object);
+                if(root.getMappingType() != ValueMappingType.object && names.size() > 1) {
+            			root.setMappingType(ValueMappingType.object);
             			root.setMappingValue(new LinkedHashMap<String, AttributeMapping>());
                 }
                 
-                Mapping map = root;
+                AttributeMapping map = root;
                 if(names.size() > 1) {
                 		String attr = names.subList(1,names.size()).stream().collect(java.util.stream.Collectors.joining("."));
                 		map = ((Map<String, AttributeMapping>)root.getMappingValue()).get(attr);
@@ -129,27 +145,27 @@ public class FlowCompiler {
                 
                 switch(mappingType) {
                 		case literal:
-                			map.setMappingType(AttributeMapping.ValueMappingType.literal);
+                			map.setMappingType(ValueMappingType.literal);
 		        			map.setMappingValue(mappingValue);
 		        			break;
 		    	        case array:
 		    	            Map<String, Object> arraymap = mapper.readValue(mappingValue.toString(), new TypeReference<Map<String, Object>>(){} ); 
-		    	        		map.setMappingType(AttributeMapping.ValueMappingType.array);
+		    	        		map.setMappingType(ValueMappingType.array);
 		    	        		map.setMappingValue(parseArrayMapping(arraymap));
 		    	            break;
 		    	        case assign:
 		    	        case expression:
 		    	        	 	if(a.getType().equals("any")) {
-		    	        	 		map.setMappingType(AttributeMapping.ValueMappingType.assign);
+		    	        	 		map.setMappingType(ValueMappingType.assign);
 		    	        	 		map.setMappingValue(mappingValue);
 		    	        	 	}
 		    		        else {
 		    		        		String mapexpr = mappingValue.toString();
 		    		        		if(Scope.isScopeVariable(mapexpr) || isFunctionMapping(mapexpr)) {
-		    		        			map.setMappingType(AttributeMapping.ValueMappingType.expression);
+		    		        			map.setMappingType(ValueMappingType.expression);
 		    		        			map.setMappingValue(parseExpression(mappingValue.toString()));
 		    		        		} else {
-		    		        			map.setMappingType(AttributeMapping.ValueMappingType.literal);
+		    		        			map.setMappingType(ValueMappingType.literal);
 		    		        			map.setMappingValue(mappingValue);
 		    		        		}
 		    		        }
@@ -213,7 +229,7 @@ public class FlowCompiler {
     private static ParseTree parseExpression(String mapping) {
 		InputStream stream = null;
 
-	    try {
+	    try {//System.out.println("mapping=" + mapping);
 	        stream = new ByteArrayInputStream(mapping.getBytes(StandardCharsets.UTF_8));
 	        MapExprGrammarLexer lexer = new MapExprGrammarLexer(CharStreams.fromStream(stream, StandardCharsets.UTF_8));
 	        CommonTokenStream tokens = new CommonTokenStream(lexer);
